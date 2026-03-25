@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Clicker App</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎮 Clicker Game</h1>
+            <p id="username">Cargando...</p>
+        </header>
+
+        <main>
+            <div class="click-section">
+                <div class="counter">
+                    <span id="click-count">0</span>
+                    <p>Clicks</p>
+                </div>
+                
+                <button id="click-btn" class="click-button">
+                    <span>👆</span>
+                    <p>CLICK</p>
+                </button>
+            </div>
+
+            <button id="leaderboard-btn" class="secondary-button">
+                🏆 Leaderboard
+            </button>
+        </main>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Conectando con Telegram...</p>
+        </div>
+
+        <!-- Leaderboard Modal -->
+        <div id="leaderboard-modal" class="modal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>🏆 Top 10</h2>
+                    <button id="close-modal" class="close-btn">&times;</button>
+                </div>
+                <div id="leaderboard-list" class="leaderboard-list">
+                    <div class="loading">Cargando...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

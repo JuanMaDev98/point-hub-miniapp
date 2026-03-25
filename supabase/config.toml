@@ -1,0 +1,11 @@
+[functions.validate-telegram]
+verify_jwt = false
+
+[functions.get-clicks]
+verify_jwt = false
+
+[functions.update-clicks]
+verify_jwt = false
+
+[functions.get-leaderboard]
+verify_jwt = false
