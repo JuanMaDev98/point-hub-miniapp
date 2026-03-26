@@ -1,6 +1,6 @@
 // Configuración
-const SUPABASE_URL = 'https://YOUR_PROJECT_ID.supabase.co';
-const SUPABASE_ANON_KEY = 'YOUR_ANON_KEY';
+const SUPABASE_URL = 'https://fxtgotsnnsuqbynkbvik.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_rAWHFK8uUjUCWOdOibHEIw_nT0pEPWw';
 
 // Variables globales
 let tg = window.Telegram.WebApp;
