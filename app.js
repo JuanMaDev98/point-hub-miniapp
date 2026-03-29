@@ -1,199 +1,224 @@
-// Configuración
-const SUPABASE_URL = 'https://fxtgotsnnsuqbynkbvik.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_rAWHFK8uUjUCWOdOibHEIw_nT0pEPWw';
+/**
+ * Mini App: Telegram WebApp + Supabase Edge Functions.
+ *
+ * Flujo:
+ * 1) Telegram inyecta initData (cadena firmada con el token del bot).
+ * 2) validate-telegram comprueba la firma en el servidor y crea/actualiza el usuario.
+ * 3) get-clicks / update-clicks vuelven a verificar initData: en el servidor obtenemos
+ *    el telegram_id del propio initData verificado, no de un número que mande el cliente
+ *    (así nadie puede inflar los clicks de otra cuenta cambiando el userId en DevTools).
+ */
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-// Variables globales (Telegram solo existe dentro de la Mini App)
+/** Se crea en init() tras cargar config.js (import dinámico → mensaje claro si falta el archivo). */
+let supabase = null;
+
 const tg = window.Telegram?.WebApp;
+
+/** initData crudo de Telegram; lo mandamos al backend en cada acción que afecta a tu usuario. */
+let telegramInitData = "";
 let userId = null;
 let userData = null;
 
-// Elementos del DOM
-const loadingEl = document.getElementById('loading');
-const mainEl = document.querySelector('main');
-const usernameEl = document.getElementById('username');
-const clickCountEl = document.getElementById('click-count');
-const clickBtn = document.getElementById('click-btn');
-const leaderboardBtn = document.getElementById('leaderboard-btn');
-const modal = document.getElementById('leaderboard-modal');
-const closeModal = document.getElementById('close-modal');
-const leaderboardList = document.getElementById('leaderboard-list');
+const loadingEl = document.getElementById("loading");
+const mainEl = document.querySelector("main");
+const usernameEl = document.getElementById("username");
+const clickCountEl = document.getElementById("click-count");
+const clickBtn = document.getElementById("click-btn");
+const leaderboardBtn = document.getElementById("leaderboard-btn");
+const modal = document.getElementById("leaderboard-modal");
+const closeModal = document.getElementById("close-modal");
+const leaderboardList = document.getElementById("leaderboard-list");
 
-// Inicializar
+/**
+ * Invoca una Edge Function. El cliente oficial serializa bien la clave publishable (sb_publishable…)
+ * o la JWT (eyJ…), que es lo que el gateway de Supabase espera hoy.
+ */
+async function invokeFunction(name, invokeOptions = {}) {
+  const { data, error } = await supabase.functions.invoke(name, invokeOptions);
+
+  if (!error) return data;
+
+  let message = error.message ?? "Error al llamar a Supabase";
+
+  try {
+    const ctx = error.context;
+    if (ctx && typeof ctx.json === "function") {
+      const body = await ctx.json();
+      if (body && typeof body.error === "string") message = body.error;
+      else if (body && typeof body.message === "string") message = body.message;
+    }
+  } catch {
+    /** ignorar */
+  }
+
+  throw new Error(message);
+}
+
+function showFatal(html) {
+  loadingEl.classList.add("active");
+  loadingEl.innerHTML = html;
+}
+
+function escapeHtml(text) {
+  if (text == null) return "";
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 async function init() {
-    console.log('🚀 [INIT] Starting...');
-    console.log('🌐 [INIT] SUPABASE_URL:', SUPABASE_URL);
+  loadingEl.classList.add("active");
 
-    loadingEl.classList.add('active');
-
-    if (!tg) {
-        loadingEl.innerHTML =
-            '<p style="color:red">⚠️ Abre esta app desde Telegram (Menú del bot → Mini App).</p>';
-        return;
+  try {
+    const { SUPABASE_URL, SUPABASE_ANON_KEY } = await import("./config.js");
+    if (
+      typeof SUPABASE_URL !== "string" ||
+      !SUPABASE_URL.startsWith("https://") ||
+      typeof SUPABASE_ANON_KEY !== "string" ||
+      !SUPABASE_ANON_KEY.length
+    ) {
+      throw new Error(
+        "Revisa SUPABASE_URL y SUPABASE_ANON_KEY en config.js (copia desde config.example.js).",
+      );
     }
+    supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } catch (err) {
+    const hint =
+      err instanceof Error ? err.message : "No se pudo cargar config.js";
+    showFatal(`<p style="color:red">❌ ${escapeHtml(hint)}</p>
+      <p style="font-size:13px;margin-top:12px;line-height:1.4">
+        Crea el archivo <code>config.js</code> copiando <code>config.example.js</code>
+        y pon ahí la URL del proyecto y la clave anon/publishable (Settings → API en Supabase).
+      </p>`);
+    return;
+  }
 
-    tg.ready();
-    tg.expand();
+  if (!tg) {
+    showFatal(
+      "<p style=\"color:red\">Abre esta página desde Telegram (bot → Mini App).</p>",
+    );
+    return;
+  }
 
-    const initData = tg.initData;
-    console.log('📦 [INIT] initData present:', !!initData);
+  tg.ready();
+  tg.expand();
 
-    if (!initData) {
-        loadingEl.innerHTML =
-            '<p style="color:red">⚠️ No hay sesión de Telegram. Abre el enlace desde el bot.</p>';
-        return;
-    }
-    
-    try {
-        console.log('🔐 [INIT] Calling validate-telegram...');
-        
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/validate-telegram`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-            },
-            body: JSON.stringify({ initData })
-        });
-        
-        console.log('📡 [INIT] Status:', response.status);
-        console.log('📡 [INIT] Headers:', [...response.headers.entries()]);
-        
-        const text = await response.text();
-        console.log('📡 [INIT] Body:', text);
+  const initData = tg.initData;
+  if (!initData) {
+    showFatal(
+      "<p style=\"color:red\">No hay sesión de Telegram. Entra desde el enlace del bot.</p>",
+    );
+    return;
+  }
 
-        if (!response.ok) {
-            let msg = text;
-            try {
-                const err = JSON.parse(text);
-                if (err && typeof err.error === 'string') msg = err.error;
-            } catch (_) {
-                /* cuerpo no JSON */
-            }
-            throw new Error(msg || `HTTP ${response.status}`);
-        }
-        
-        const data = JSON.parse(text);
-        console.log('✅ [INIT] User:', data.user);
-        
-        userData = data.user;
-        userId = data.user.id;
-        usernameEl.textContent = `@${userData.username || userData.first_name}`;
-        
-        await loadClicks();
-        
-        loadingEl.classList.remove('active');
-        mainEl.classList.add('active');
-        console.log('🎉 [INIT] Done!');
-        
-    } catch (error) {
-        console.error('💥 [INIT] Error:', error);
-        loadingEl.innerHTML = `
-            <p style="color:red">❌ ${error.message}</p>
-            <p style="font-size:11px">Consola: F12</p>
-        `;
-    }
+  try {
+    const data = await invokeFunction("validate-telegram", {
+      body: { initData },
+    });
+
+    telegramInitData = initData;
+    userData = data.user;
+    userId = data.user.id;
+    usernameEl.textContent = `@${userData.username || userData.first_name}`;
+
+    await loadClicks();
+
+    loadingEl.classList.remove("active");
+    mainEl.classList.add("active");
+  } catch (err) {
+    console.error(err);
+    const msg =
+      err instanceof Error ? err.message : "Error al inicializar la sesión";
+    showFatal(
+      `<p style="color:red">❌ ${escapeHtml(msg)}</p><p style="font-size:12px;margin-top:8px">Comprueba que las Edge Functions estén desplegadas y que <code>TELEGRAM_BOT_TOKEN</code> exista como secret en Supabase.</p>`,
+    );
+  }
 }
 
-// Cargar clicks del usuario
 async function loadClicks() {
-    try {
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/get-clicks`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-            },
-            body: JSON.stringify({ userId })
-        });
-        
-        const data = await response.json();
-        clickCountEl.textContent = data.clicks || 0;
-        
-    } catch (error) {
-        console.error('Error cargando clicks:', error);
-    }
+  try {
+    const data = await invokeFunction("get-clicks", {
+      body: { initData: telegramInitData },
+    });
+    clickCountEl.textContent = data.clicks ?? 0;
+  } catch (err) {
+    console.error(err);
+    clickCountEl.textContent = "?";
+  }
 }
 
-// Actualizar clicks
 async function updateClicks() {
-    try {
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/update-clicks`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-            },
-            body: JSON.stringify({ userId })
-        });
-        
-        const data = await response.json();
-        clickCountEl.textContent = data.clicks;
-        
-        // Feedback visual
-        clickBtn.style.transform = 'scale(0.95)';
-        setTimeout(() => {
-            clickBtn.style.transform = 'scale(1)';
-        }, 100);
-        
-    } catch (error) {
-        console.error('Error actualizando clicks:', error);
-    }
+  try {
+    const data = await invokeFunction("update-clicks", {
+      body: { initData: telegramInitData },
+    });
+    clickCountEl.textContent = data.clicks;
+
+    clickBtn.style.transform = "scale(0.95)";
+    setTimeout(() => {
+      clickBtn.style.transform = "scale(1)";
+    }, 100);
+  } catch (err) {
+    console.error(err);
+  }
 }
 
-// Cargar leaderboard
 async function loadLeaderboard() {
-    leaderboardList.innerHTML = '<div class="loading"><div class="spinner"></div><p>Cargando...</p></div>';
-    
-    try {
-        const response = await fetch(`${SUPABASE_URL}/functions/v1/get-leaderboard`, {
-            method: 'GET',
-            headers: {
-                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-            }
-        });
-        
-        const data = await response.json();
-        
-        if (data.users && data.users.length > 0) {
-            leaderboardList.innerHTML = data.users.map((user, index) => {
-                const rankClass = index === 0 ? 'gold' : index === 1 ? 'silver' : index === 2 ? 'bronze' : '';
-                const isCurrentUser = user.id === userId ? 'current-user' : '';
-                
-                return `
-                    <div class="leaderboard-item ${isCurrentUser}">
-                        <span class="leaderboard-rank ${rankClass}">#${index + 1}</span>
-                        <span class="leaderboard-user">${user.username || user.first_name}</span>
-                        <span class="leaderboard-clicks">${user.clicks} 👆</span>
-                    </div>
-                `;
-            }).join('');
-        } else {
-            leaderboardList.innerHTML = '<p style="text-align: center; padding: 20px;">Sin datos aún</p>';
-        }
-        
-    } catch (error) {
-        console.error('Error cargando leaderboard:', error);
-        leaderboardList.innerHTML = '<p style="text-align: center; padding: 20px; color: red;">Error al cargar</p>';
+  leaderboardList.innerHTML =
+    '<div style="text-align:center;padding:20px">Cargando…</div>';
+
+  try {
+    const data = await invokeFunction("get-leaderboard", { method: "GET" });
+
+    if (data.users?.length > 0) {
+      leaderboardList.innerHTML = data.users
+        .map((user, index) => {
+          const rankClass =
+            index === 0
+              ? "gold"
+              : index === 1
+                ? "silver"
+                : index === 2
+                  ? "bronze"
+                  : "";
+          const isMe = user.id === userId ? "current-user" : "";
+          const label = escapeHtml(user.username || user.first_name);
+          return `
+            <div class="leaderboard-item ${isMe}">
+              <span class="leaderboard-rank ${rankClass}">#${index + 1}</span>
+              <span class="leaderboard-user">${label}</span>
+              <span class="leaderboard-clicks">${user.clicks} 👆</span>
+            </div>`;
+        })
+        .join("");
+    } else {
+      leaderboardList.innerHTML =
+        '<p style="text-align:center;padding:20px">Sin datos aún</p>';
     }
+  } catch (err) {
+    console.error(err);
+    leaderboardList.innerHTML =
+      '<p style="text-align:center;padding:20px;color:red">No se pudo cargar el ranking</p>';
+  }
 }
 
-// Event Listeners
-clickBtn.addEventListener('click', updateClicks);
+clickBtn.addEventListener("click", updateClicks);
 
-leaderboardBtn.addEventListener('click', () => {
-    modal.classList.add('active');
-    loadLeaderboard();
+leaderboardBtn.addEventListener("click", () => {
+  modal.classList.add("active");
+  loadLeaderboard();
 });
 
-closeModal.addEventListener('click', () => {
-    modal.classList.remove('active');
+closeModal.addEventListener("click", () => {
+  modal.classList.remove("active");
 });
 
-modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-        modal.classList.remove('active');
-    }
+modal.addEventListener("click", (e) => {
+  if (e.target === modal) modal.classList.remove("active");
 });
 
-// Iniciar app
 init();

@@ -1,0 +1,6 @@
+# Credenciales del frontend (copia desde config.example.js)
+config.js
+
+.env
+.env.*
+!.env.example

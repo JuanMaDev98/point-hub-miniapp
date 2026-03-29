@@ -1,72 +1,43 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders } from "../_shared/cors.ts";
+import { verifyTelegramWebAppInitData } from "../_shared/telegram-init.ts";
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
   }
 
   try {
-    const { userId } = await req.json();
-    
-    if (!userId) {
-      throw new Error('userId required');
-    }
+    const { initData } = await req.json();
+    const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
+    if (!botToken) throw new Error("TELEGRAM_BOT_TOKEN no configurado");
+
+    const user = await verifyTelegramWebAppInitData(initData, botToken);
 
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    // Incrementar clicks
-    const { data, error } = await supabase.rpc('increment_clicks', {
-      user_telegram_id: userId
+    const { data: newCount, error } = await supabase.rpc("increment_clicks", {
+      user_telegram_id: user.id,
     });
 
-    if (error) {
-      // Fallback: update directo
-      const { data: userData } = await supabase
-        .from('users')
-        .select('clicks')
-        .eq('telegram_id', userId)
-        .single();
-      
-      const newClicks = (userData?.clicks || 0) + 1;
-      
-      await supabase
-        .from('users')
-        .update({ clicks: newClicks })
-        .eq('telegram_id', userId);
-      
-      return new Response(
-        JSON.stringify({ clicks: newClicks }),
-        { 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          status: 200 
-        }
-      );
+    if (error) throw new Error(error.message);
+    if (newCount == null) {
+      throw new Error("No existe fila de usuario; vuelve a abrir la Mini App");
     }
 
-    return new Response(
-      JSON.stringify({ clicks: data }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 200 
-      }
-    );
-
-  } catch (error) {
-    return new Response(
-      JSON.stringify({ error: error.message }),
-      { 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 400 
-      }
-    );
+    return new Response(JSON.stringify({ clicks: newCount }), {
+      status: 200,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Error desconocido";
+    return new Response(JSON.stringify({ error: message }), {
+      status: 400,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });
