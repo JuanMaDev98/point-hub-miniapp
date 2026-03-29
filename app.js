@@ -2,8 +2,8 @@
 const SUPABASE_URL = 'https://fxtgotsnnsuqbynkbvik.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_rAWHFK8uUjUCWOdOibHEIw_nT0pEPWw';
 
-// Variables globales
-let tg = window.Telegram.WebApp;
+// Variables globales (Telegram solo existe dentro de la Mini App)
+const tg = window.Telegram?.WebApp;
 let userId = null;
 let userData = null;
 
@@ -22,15 +22,24 @@ const leaderboardList = document.getElementById('leaderboard-list');
 async function init() {
     console.log('🚀 [INIT] Starting...');
     console.log('🌐 [INIT] SUPABASE_URL:', SUPABASE_URL);
-    
+
+    loadingEl.classList.add('active');
+
+    if (!tg) {
+        loadingEl.innerHTML =
+            '<p style="color:red">⚠️ Abre esta app desde Telegram (Menú del bot → Mini App).</p>';
+        return;
+    }
+
     tg.ready();
     tg.expand();
-    
+
     const initData = tg.initData;
     console.log('📦 [INIT] initData present:', !!initData);
-    
+
     if (!initData) {
-        loadingEl.innerHTML = '<p style="color:red">⚠️ Abre desde Telegram</p>';
+        loadingEl.innerHTML =
+            '<p style="color:red">⚠️ No hay sesión de Telegram. Abre el enlace desde el bot.</p>';
         return;
     }
     
@@ -51,9 +60,16 @@ async function init() {
         
         const text = await response.text();
         console.log('📡 [INIT] Body:', text);
-        
+
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${text}`);
+            let msg = text;
+            try {
+                const err = JSON.parse(text);
+                if (err && typeof err.error === 'string') msg = err.error;
+            } catch (_) {
+                /* cuerpo no JSON */
+            }
+            throw new Error(msg || `HTTP ${response.status}`);
         }
         
         const data = JSON.parse(text);
