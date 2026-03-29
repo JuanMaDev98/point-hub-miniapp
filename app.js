@@ -26,6 +26,8 @@ let serverClicks = 0;
 let pendingClicks = 0;
 let flushTimer = null;
 let flushInFlight = false;
+/** Evita que el número visible retroceda por respuestas tardías o lecturas desfasadas. */
+let sessionMaxShown = 0;
 
 /** Tiempo sin clic antes de enviar el lote al servidor (ms). */
 const FLUSH_DELAY_MS = 280;
@@ -150,7 +152,9 @@ async function init() {
 }
 
 function displayClickTotal() {
-  clickCountEl.textContent = serverClicks + pendingClicks;
+  const current = serverClicks + pendingClicks;
+  sessionMaxShown = Math.max(sessionMaxShown, current);
+  clickCountEl.textContent = sessionMaxShown;
 }
 
 /** El número de clicks que devuelve una función; null si viene raro (evita “volver” al total viejo). */
@@ -166,13 +170,15 @@ async function pullServerClickCount() {
     body: { initData: telegramInitData },
   });
   const n = readClicksFromResponse(data);
-  if (n !== null) serverClicks = n;
+  // Un clicker solo sube; si llega un valor menor, suele ser lectura retrasada.
+  if (n !== null) serverClicks = Math.max(serverClicks, n);
 }
 
 async function loadClicks() {
   try {
     await pullServerClickCount();
     pendingClicks = 0;
+    sessionMaxShown = serverClicks;
     displayClickTotal();
   } catch (err) {
     console.error(err);
@@ -213,7 +219,7 @@ async function flushPendingClicks() {
         pendingClicks += delta;
       }
     } else {
-      serverClicks = confirmed;
+      serverClicks = Math.max(serverClicks, confirmed);
     }
   } catch (err) {
     console.error(err);
