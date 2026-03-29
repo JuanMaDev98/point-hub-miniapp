@@ -153,12 +153,25 @@ function displayClickTotal() {
   clickCountEl.textContent = serverClicks + pendingClicks;
 }
 
+/** El número de clicks que devuelve una función; null si viene raro (evita “volver” al total viejo). */
+function readClicksFromResponse(raw) {
+  if (raw == null || typeof raw !== "object") return null;
+  const n = Number(raw.clicks);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Solo lee el total en servidor (no toca pending). Útil si hubo respuesta rara al guardar. */
+async function pullServerClickCount() {
+  const data = await invokeFunction("get-clicks", {
+    body: { initData: telegramInitData },
+  });
+  const n = readClicksFromResponse(data);
+  if (n !== null) serverClicks = n;
+}
+
 async function loadClicks() {
   try {
-    const data = await invokeFunction("get-clicks", {
-      body: { initData: telegramInitData },
-    });
-    serverClicks = data.clicks ?? 0;
+    await pullServerClickCount();
     pendingClicks = 0;
     displayClickTotal();
   } catch (err) {
@@ -177,6 +190,8 @@ function scheduleFlushClicks() {
 
 /**
  * Envía los pendingClicks acumulados en una sola llamada (un solo viaje de red y una validación Telegram).
+ * Importante: si la respuesta no trae `clicks` numérico, NO reutilizamos un serverClicks viejo:
+ * ya vaciamos pending al empezar y eso era lo que provocaba que el contador “saltara atrás” (ej. 40 → 20).
  */
 async function flushPendingClicks() {
   if (flushInFlight || pendingClicks === 0) return;
@@ -184,19 +199,37 @@ async function flushPendingClicks() {
   flushInFlight = true;
   const delta = pendingClicks;
   pendingClicks = 0;
+  /** Total que debería tener el servidor si este lote se aplicó (evita duplicar pending si el JSON vino mal). */
+  const serverBeforeFlush = serverClicks;
 
   try {
-    const data = await invokeFunction("update-clicks", {
+    const raw = await invokeFunction("update-clicks", {
       body: { initData: telegramInitData, delta },
     });
-    serverClicks = data.clicks ?? serverClicks;
+    const confirmed = readClicksFromResponse(raw);
+    if (confirmed === null) {
+      await pullServerClickCount();
+      if (serverClicks < serverBeforeFlush + delta) {
+        pendingClicks += delta;
+      }
+    } else {
+      serverClicks = confirmed;
+    }
   } catch (err) {
     console.error(err);
     pendingClicks += delta;
+    try {
+      await pullServerClickCount();
+    } catch (e) {
+      console.error(e);
+    }
   } finally {
     flushInFlight = false;
     displayClickTotal();
-    if (pendingClicks > 0) scheduleFlushClicks();
+    // Si mientras guardábamos entraron más clics, enviamos en cadena (sin esperar otros 280ms).
+    if (pendingClicks > 0) {
+      queueMicrotask(() => void flushPendingClicks());
+    }
   }
 }
 
