@@ -50,17 +50,35 @@ CREATE POLICY "Users can insert" ON users
     FOR INSERT
     WITH CHECK (true);
 
--- Función para incrementar clicks atómicamente
+-- +1 (legacy / otros usos)
 CREATE OR REPLACE FUNCTION increment_clicks(user_telegram_id BIGINT)
 RETURNS INTEGER AS $$
 DECLARE
     new_clicks INTEGER;
 BEGIN
-    UPDATE users 
-    SET clicks = clicks + 1 
+    UPDATE users
+    SET clicks = clicks + 1
     WHERE telegram_id = user_telegram_id
     RETURNING clicks INTO new_clicks;
-    
+
+    RETURN new_clicks;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Varios clicks en un solo UPDATE (la Mini App agrupa ráfagas en el cliente).
+-- El servidor limita cuántos suma por llamada para evitar abusos.
+CREATE OR REPLACE FUNCTION increment_clicks_by(user_telegram_id BIGINT, delta INTEGER)
+RETURNS INTEGER AS $$
+DECLARE
+    d INTEGER;
+    new_clicks INTEGER;
+BEGIN
+    d := LEAST(GREATEST(delta, 1), 500);
+    UPDATE users
+    SET clicks = clicks + d
+    WHERE telegram_id = user_telegram_id
+    RETURNING clicks INTO new_clicks;
+
     RETURN new_clicks;
 END;
 $$ LANGUAGE plpgsql;

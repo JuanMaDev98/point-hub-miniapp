@@ -9,19 +9,27 @@ serve(async (req) => {
   }
 
   try {
-    const { initData } = await req.json();
+    const body = await req.json();
+    const { initData } = body;
     const botToken = Deno.env.get("TELEGRAM_BOT_TOKEN");
     if (!botToken) throw new Error("TELEGRAM_BOT_TOKEN no configurado");
 
     const user = await verifyTelegramWebAppInitData(initData, botToken);
+
+    let delta = 1;
+    const raw = body.delta;
+    if (typeof raw === "number" && Number.isFinite(raw)) {
+      delta = Math.floor(raw);
+    }
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    const { data: newCount, error } = await supabase.rpc("increment_clicks", {
+    const { data: newCount, error } = await supabase.rpc("increment_clicks_by", {
       user_telegram_id: user.id,
+      delta,
     });
 
     if (error) throw new Error(error.message);

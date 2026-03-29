@@ -20,6 +20,16 @@ let telegramInitData = "";
 let userId = null;
 let userData = null;
 
+/** Clicks confirmados por el servidor (último valor de get-clicks / update-clicks). */
+let serverClicks = 0;
+/** Clicks aún no enviados (se agrupan para menos latencia y menos validaciones Telegram). */
+let pendingClicks = 0;
+let flushTimer = null;
+let flushInFlight = false;
+
+/** Tiempo sin clic antes de enviar el lote al servidor (ms). */
+const FLUSH_DELAY_MS = 280;
+
 const loadingEl = document.getElementById("loading");
 const mainEl = document.querySelector("main");
 const usernameEl = document.getElementById("username");
@@ -139,33 +149,74 @@ async function init() {
   }
 }
 
+function displayClickTotal() {
+  clickCountEl.textContent = serverClicks + pendingClicks;
+}
+
 async function loadClicks() {
   try {
     const data = await invokeFunction("get-clicks", {
       body: { initData: telegramInitData },
     });
-    clickCountEl.textContent = data.clicks ?? 0;
+    serverClicks = data.clicks ?? 0;
+    pendingClicks = 0;
+    displayClickTotal();
   } catch (err) {
     console.error(err);
     clickCountEl.textContent = "?";
   }
 }
 
-async function updateClicks() {
+function scheduleFlushClicks() {
+  if (flushTimer) clearTimeout(flushTimer);
+  flushTimer = setTimeout(() => {
+    flushTimer = null;
+    void flushPendingClicks();
+  }, FLUSH_DELAY_MS);
+}
+
+/**
+ * Envía los pendingClicks acumulados en una sola llamada (un solo viaje de red y una validación Telegram).
+ */
+async function flushPendingClicks() {
+  if (flushInFlight || pendingClicks === 0) return;
+
+  flushInFlight = true;
+  const delta = pendingClicks;
+  pendingClicks = 0;
+
   try {
     const data = await invokeFunction("update-clicks", {
-      body: { initData: telegramInitData },
+      body: { initData: telegramInitData, delta },
     });
-    clickCountEl.textContent = data.clicks;
-
-    clickBtn.style.transform = "scale(0.95)";
-    setTimeout(() => {
-      clickBtn.style.transform = "scale(1)";
-    }, 100);
+    serverClicks = data.clicks ?? serverClicks;
   } catch (err) {
     console.error(err);
+    pendingClicks += delta;
+  } finally {
+    flushInFlight = false;
+    displayClickTotal();
+    if (pendingClicks > 0) scheduleFlushClicks();
   }
 }
+
+function updateClicks() {
+  pendingClicks += 1;
+  displayClickTotal();
+  scheduleFlushClicks();
+
+  clickBtn.style.transform = "scale(0.95)";
+  setTimeout(() => {
+    clickBtn.style.transform = "scale(1)";
+  }, 100);
+}
+
+// Al minimizar o cerrar, intenta enviar lo pendiente (mejor esfuerzo; Telegram a veces mata el WebView rápido).
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden" && pendingClicks > 0) {
+    void flushPendingClicks();
+  }
+});
 
 async function loadLeaderboard() {
   leaderboardList.innerHTML =
