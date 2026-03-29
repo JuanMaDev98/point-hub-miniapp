@@ -20,19 +20,23 @@ const leaderboardList = document.getElementById('leaderboard-list');
 
 // Inicializar
 async function init() {
+    console.log('🚀 [INIT] Starting...');
+    console.log('🌐 [INIT] SUPABASE_URL:', SUPABASE_URL);
+    
     tg.ready();
     tg.expand();
     
-    // Obtener datos de Telegram
     const initData = tg.initData;
+    console.log('📦 [INIT] initData present:', !!initData);
     
     if (!initData) {
-        alert('Esta app solo funciona dentro de Telegram');
+        loadingEl.innerHTML = '<p style="color:red">⚠️ Abre desde Telegram</p>';
         return;
     }
     
     try {
-        // Validar usuario con Supabase
+        console.log('🔐 [INIT] Calling validate-telegram...');
+        
         const response = await fetch(`${SUPABASE_URL}/functions/v1/validate-telegram`, {
             method: 'POST',
             headers: {
@@ -42,27 +46,35 @@ async function init() {
             body: JSON.stringify({ initData })
         });
         
+        console.log('📡 [INIT] Status:', response.status);
+        console.log('📡 [INIT] Headers:', [...response.headers.entries()]);
+        
+        const text = await response.text();
+        console.log('📡 [INIT] Body:', text);
+        
         if (!response.ok) {
-            throw new Error('Error validando usuario');
+            throw new Error(`HTTP ${response.status}: ${text}`);
         }
         
-        const data = await response.json();
+        const data = JSON.parse(text);
+        console.log('✅ [INIT] User:', data.user);
+        
         userData = data.user;
         userId = data.user.id;
-        
-        // Actualizar UI
         usernameEl.textContent = `@${userData.username || userData.first_name}`;
         
-        // Cargar clicks
         await loadClicks();
         
-        // Mostrar contenido principal
         loadingEl.classList.remove('active');
         mainEl.classList.add('active');
+        console.log('🎉 [INIT] Done!');
         
     } catch (error) {
-        console.error('Error:', error);
-        loadingEl.innerHTML = '<p>Error al cargar. Reinicia la app.</p>';
+        console.error('💥 [INIT] Error:', error);
+        loadingEl.innerHTML = `
+            <p style="color:red">❌ ${error.message}</p>
+            <p style="font-size:11px">Consola: F12</p>
+        `;
     }
 }
 
