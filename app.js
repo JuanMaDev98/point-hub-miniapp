@@ -22,12 +22,12 @@ let userData = null;
 
 /** Clicks confirmados por el servidor (último valor de get-clicks / update-clicks). */
 let serverClicks = 0;
-/** Clicks aún no enviados (se agrupan para menos latencia y menos validaciones Telegram). */
-let pendingClicks = 0;
+/** Clicks aún no enviados. */
+let queuedClicks = 0;
+/** Clicks ya enviados y pendientes de confirmación del servidor. */
+let inFlightClicks = 0;
 let flushTimer = null;
 let flushInFlight = false;
-/** Evita que el número visible retroceda por respuestas tardías o lecturas desfasadas. */
-let sessionMaxShown = 0;
 
 /** Tiempo sin clic antes de enviar el lote al servidor (ms). */
 const FLUSH_DELAY_MS = 280;
@@ -152,9 +152,7 @@ async function init() {
 }
 
 function displayClickTotal() {
-  const current = serverClicks + pendingClicks;
-  sessionMaxShown = Math.max(sessionMaxShown, current);
-  clickCountEl.textContent = sessionMaxShown;
+  clickCountEl.textContent = serverClicks + queuedClicks + inFlightClicks;
 }
 
 /** El número de clicks que devuelve una función; null si viene raro (evita “volver” al total viejo). */
@@ -177,8 +175,8 @@ async function pullServerClickCount() {
 async function loadClicks() {
   try {
     await pullServerClickCount();
-    pendingClicks = 0;
-    sessionMaxShown = serverClicks;
+    queuedClicks = 0;
+    inFlightClicks = 0;
     displayClickTotal();
   } catch (err) {
     console.error(err);
@@ -200,13 +198,13 @@ function scheduleFlushClicks() {
  * ya vaciamos pending al empezar y eso era lo que provocaba que el contador “saltara atrás” (ej. 40 → 20).
  */
 async function flushPendingClicks() {
-  if (flushInFlight || pendingClicks === 0) return;
+  if (flushInFlight || queuedClicks === 0) return;
 
   flushInFlight = true;
-  const delta = pendingClicks;
-  pendingClicks = 0;
-  /** Total que debería tener el servidor si este lote se aplicó (evita duplicar pending si el JSON vino mal). */
-  const serverBeforeFlush = serverClicks;
+  const delta = queuedClicks;
+  queuedClicks = 0;
+  inFlightClicks = delta;
+  const expectedServerAfterFlush = serverClicks + inFlightClicks;
 
   try {
     const raw = await invokeFunction("update-clicks", {
@@ -215,32 +213,34 @@ async function flushPendingClicks() {
     const confirmed = readClicksFromResponse(raw);
     if (confirmed === null) {
       await pullServerClickCount();
-      if (serverClicks < serverBeforeFlush + delta) {
-        pendingClicks += delta;
+      // Si aún no aparece el lote en el servidor, lo reencolamos.
+      if (serverClicks < expectedServerAfterFlush) {
+        queuedClicks += inFlightClicks;
       }
     } else {
       serverClicks = Math.max(serverClicks, confirmed);
     }
   } catch (err) {
     console.error(err);
-    pendingClicks += delta;
+    queuedClicks += inFlightClicks;
     try {
       await pullServerClickCount();
     } catch (e) {
       console.error(e);
     }
   } finally {
+    inFlightClicks = 0;
     flushInFlight = false;
     displayClickTotal();
     // Si mientras guardábamos entraron más clics, enviamos en cadena (sin esperar otros 280ms).
-    if (pendingClicks > 0) {
+    if (queuedClicks > 0) {
       queueMicrotask(() => void flushPendingClicks());
     }
   }
 }
 
 function updateClicks() {
-  pendingClicks += 1;
+  queuedClicks += 1;
   displayClickTotal();
   scheduleFlushClicks();
 
@@ -252,7 +252,7 @@ function updateClicks() {
 
 // Al minimizar o cerrar, intenta enviar lo pendiente (mejor esfuerzo; Telegram a veces mata el WebView rápido).
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden" && pendingClicks > 0) {
+  if (document.visibilityState === "hidden" && queuedClicks > 0) {
     void flushPendingClicks();
   }
 });
