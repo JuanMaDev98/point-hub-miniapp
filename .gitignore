@@ -1,6 +1,4 @@
-# Credenciales del frontend (copia desde config.example.js)
-config.js
-
+# Variables locales de otros entornos (opcional)
 .env
 .env.*
 !.env.example
