@@ -1,3 +1,6 @@
+# Caché local de Supabase CLI (link, introspect…). No subir a git.
+supabase/.temp/
+
 # Variables locales de otros entornos (opcional)
 .env
 .env.*
