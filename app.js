@@ -1,36 +1,45 @@
 /**
- * Mini App: Telegram WebApp + Supabase Edge Functions.
+ * Frontend principal de la Mini App.
  *
- * Flujo:
- * 1) Telegram inyecta initData (cadena firmada con el token del bot).
- * 2) validate-telegram comprueba la firma en el servidor y crea/actualiza el usuario.
- * 3) get-clicks / update-clicks vuelven a verificar initData: en el servidor obtenemos
- *    el telegram_id del propio initData verificado, no de un número que mande el cliente
- *    (así nadie puede inflar los clicks de otra cuenta cambiando el userId en DevTools).
+ * Idea clave:
+ * - El cliente SIEMPRE muestra respuesta instantánea al clic.
+ * - El servidor SIEMPRE decide el total real de clicks.
+ * - El cliente envía clicks en lotes para reducir latencia percibida.
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-/** Se crea en init() tras cargar config.js (import dinámico → mensaje claro si falta el archivo). */
+// ============================================================================
+// Estado global de la app
+// ============================================================================
+
+/** Cliente Supabase. Se crea al leer config.js en runtime. */
 let supabase = null;
 
 const tg = window.Telegram?.WebApp;
 
-/** initData crudo de Telegram; lo mandamos al backend en cada acción que afecta a tu usuario. */
+/** initData firmado por Telegram; se manda al backend en cada operación sensible. */
 let telegramInitData = "";
 let userId = null;
 let userData = null;
 
-/** Clicks confirmados por el servidor (último valor de get-clicks / update-clicks). */
+/** Clicks confirmados por backend. */
 let serverClicks = 0;
-/** Clicks aún no enviados. */
+/** Clicks acumulados localmente y aún no enviados. */
 let queuedClicks = 0;
-/** Clicks ya enviados y pendientes de confirmación del servidor. */
+/** Clicks enviados y pendientes de respuesta del backend. */
 let inFlightClicks = 0;
 let flushTimer = null;
 let flushInFlight = false;
 
-/** Tiempo sin clic antes de enviar el lote al servidor (ms). */
+/**
+ * Debounce del envío:
+ * esperamos este tiempo tras el último clic para agrupar varios en una sola petición.
+ */
 const FLUSH_DELAY_MS = 280;
+
+// ============================================================================
+// Referencias del DOM
+// ============================================================================
 
 const loadingEl = document.getElementById("loading");
 const mainEl = document.querySelector("main");
@@ -43,8 +52,8 @@ const closeModal = document.getElementById("close-modal");
 const leaderboardList = document.getElementById("leaderboard-list");
 
 /**
- * Invoca una Edge Function. El cliente oficial serializa bien la clave publishable (sb_publishable…)
- * o la JWT (eyJ…), que es lo que el gateway de Supabase espera hoy.
+ * Wrapper de invocación de Edge Functions con manejo de errores consistente.
+ * Si Supabase devuelve error con body JSON, intenta usar ese mensaje más específico.
  */
 async function invokeFunction(name, invokeOptions = {}) {
   const { data, error } = await supabase.functions.invoke(name, invokeOptions);
@@ -67,11 +76,13 @@ async function invokeFunction(name, invokeOptions = {}) {
   throw new Error(message);
 }
 
+/** Muestra error fatal (bloqueante) en el overlay de carga. */
 function showFatal(html) {
   loadingEl.classList.add("active");
   loadingEl.innerHTML = html;
 }
 
+/** Escapa texto antes de insertarlo en innerHTML (evita XSS básico). */
 function escapeHtml(text) {
   if (text == null) return "";
   return String(text)
@@ -82,6 +93,10 @@ function escapeHtml(text) {
     .replace(/'/g, "&#39;");
 }
 
+/**
+ * Carga configuración + valida entorno Telegram + autentica usuario en backend.
+ * Este método deja la app lista para usarse.
+ */
 async function init() {
   loadingEl.classList.add("active");
 
@@ -128,6 +143,7 @@ async function init() {
   }
 
   try {
+    // Esto crea/actualiza usuario en la base si la firma de Telegram es válida.
     const data = await invokeFunction("validate-telegram", {
       body: { initData },
     });
@@ -151,18 +167,24 @@ async function init() {
   }
 }
 
+/** Pinta el total visible en pantalla.
+ * Fórmula:
+ * - serverClicks: lo confirmado por backend.
+ * - queuedClicks: lo que ya tocó el usuario y aún no salió.
+ * - inFlightClicks: lo ya enviado pero no confirmado todavía.
+ */
 function displayClickTotal() {
   clickCountEl.textContent = serverClicks + queuedClicks + inFlightClicks;
 }
 
-/** El número de clicks que devuelve una función; null si viene raro (evita “volver” al total viejo). */
+/** Intenta leer `{ clicks: number }` de una respuesta. */
 function readClicksFromResponse(raw) {
   if (raw == null || typeof raw !== "object") return null;
   const n = Number(raw.clicks);
   return Number.isFinite(n) ? n : null;
 }
 
-/** Solo lee el total en servidor (no toca pending). Útil si hubo respuesta rara al guardar. */
+/** Trae el contador real desde backend sin tocar cola local. */
 async function pullServerClickCount() {
   const data = await invokeFunction("get-clicks", {
     body: { initData: telegramInitData },
@@ -172,6 +194,7 @@ async function pullServerClickCount() {
   if (n !== null) serverClicks = Math.max(serverClicks, n);
 }
 
+/** Carga inicial del contador al entrar a la app. */
 async function loadClicks() {
   try {
     await pullServerClickCount();
@@ -184,6 +207,7 @@ async function loadClicks() {
   }
 }
 
+/** Programa el envío por lotes usando debounce. */
 function scheduleFlushClicks() {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
@@ -193,9 +217,12 @@ function scheduleFlushClicks() {
 }
 
 /**
- * Envía los pendingClicks acumulados en una sola llamada (un solo viaje de red y una validación Telegram).
- * Importante: si la respuesta no trae `clicks` numérico, NO reutilizamos un serverClicks viejo:
- * ya vaciamos pending al empezar y eso era lo que provocaba que el contador “saltara atrás” (ej. 40 → 20).
+ * Envía una tanda de clicks al backend.
+ *
+ * Por qué este diseño:
+ * 1) Mueve `queued -> inFlight` antes de llamar API para mantener UI reactiva.
+ * 2) Si falla, devuelve ese lote a `queued` para reintento.
+ * 3) Si respuesta llega rara, consulta backend y decide si reencolar.
  */
 async function flushPendingClicks() {
   if (flushInFlight || queuedClicks === 0) return;
@@ -239,6 +266,7 @@ async function flushPendingClicks() {
   }
 }
 
+/** Handler del botón de click: suma instantánea + programa sync. */
 function updateClicks() {
   queuedClicks += 1;
   displayClickTotal();
@@ -250,13 +278,14 @@ function updateClicks() {
   }, 100);
 }
 
-// Al minimizar o cerrar, intenta enviar lo pendiente (mejor esfuerzo; Telegram a veces mata el WebView rápido).
+// Al ocultar la app, intentamos enviar cola pendiente (best effort).
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden" && queuedClicks > 0) {
     void flushPendingClicks();
   }
 });
 
+/** Carga y pinta el Top 10. */
 async function loadLeaderboard() {
   leaderboardList.innerHTML =
     '<div style="text-align:center;padding:20px">Cargando…</div>';
@@ -296,6 +325,10 @@ async function loadLeaderboard() {
   }
 }
 
+// ============================================================================
+// Eventos UI
+// ============================================================================
+
 clickBtn.addEventListener("click", updateClicks);
 
 leaderboardBtn.addEventListener("click", () => {
@@ -311,4 +344,5 @@ modal.addEventListener("click", (e) => {
   if (e.target === modal) modal.classList.remove("active");
 });
 
+// Punto de entrada.
 init();
