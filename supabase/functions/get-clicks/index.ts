@@ -1,11 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { verifyTelegramWebAppInitData } from "../_shared/telegram-init.ts";
 
 serve(async (req) => {
+  const origin = req.headers.get("Origin");
+  const headers = getCorsHeaders(origin);
+
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers });
   }
 
   try {
@@ -32,13 +35,13 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({ clicks: data.clicks }), {
       status: 200,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...headers, "Content-Type": "application/json" },
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Error desconocido";
     return new Response(JSON.stringify({ error: message }), {
       status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...headers, "Content-Type": "application/json" },
     });
   }
 });

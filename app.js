@@ -32,6 +32,46 @@ let flushTimer = null;
 let flushInFlight = false;
 
 /**
+ * Persistencia de la cola de clicks en localStorage.
+ * Si el usuario cierra la app con clicks pendientes, se recuperan al volver.
+ */
+const STORAGE_KEY = "pointhub_click_queue";
+
+function loadQueuedClicks() {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed.queued === "number" && parsed.queued > 0) {
+        queuedClicks = parsed.queued;
+      }
+    }
+  } catch {
+    /** ignorar */
+  }
+}
+
+function saveQueuedClicks() {
+  try {
+    if (queuedClicks > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ queued: queuedClicks }));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  } catch {
+    /** ignorar */
+  }
+}
+
+function clearQueuedClicks() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    /** ignorar */
+  }
+}
+
+/**
  * Debounce del envío:
  * esperamos este tiempo tras el último clic para agrupar varios en una sola petición.
  */
@@ -197,10 +237,13 @@ async function pullServerClickCount() {
 /** Carga inicial del contador al entrar a la app. */
 async function loadClicks() {
   try {
+    loadQueuedClicks();
     await pullServerClickCount();
-    queuedClicks = 0;
-    inFlightClicks = 0;
     displayClickTotal();
+    // Si hay clicks pendientes al cargar, enviarlos inmediatamente
+    if (queuedClicks > 0) {
+      void flushPendingClicks();
+    }
   } catch (err) {
     console.error(err);
     clickCountEl.textContent = "?";
@@ -214,6 +257,7 @@ function scheduleFlushClicks() {
     flushTimer = null;
     void flushPendingClicks();
   }, FLUSH_DELAY_MS);
+  saveQueuedClicks();
 }
 
 /**
@@ -259,6 +303,7 @@ async function flushPendingClicks() {
     inFlightClicks = 0;
     flushInFlight = false;
     displayClickTotal();
+    saveQueuedClicks();
     // Si mientras guardábamos entraron más clics, enviamos en cadena (sin esperar otros 280ms).
     if (queuedClicks > 0) {
       queueMicrotask(() => void flushPendingClicks());
@@ -291,7 +336,9 @@ async function loadLeaderboard() {
     '<div style="text-align:center;padding:20px">Cargando…</div>';
 
   try {
-    const data = await invokeFunction("get-leaderboard", { method: "GET" });
+    const data = await invokeFunction("get-leaderboard", {
+      body: { initData: telegramInitData },
+    });
 
     if (data.users?.length > 0) {
       leaderboardList.innerHTML = data.users

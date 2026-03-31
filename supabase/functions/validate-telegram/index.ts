@@ -1,11 +1,14 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { verifyTelegramWebAppInitData } from "../_shared/telegram-init.ts";
 
 serve(async (req) => {
+  const origin = req.headers.get("Origin");
+  const headers = getCorsHeaders(origin);
+
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers });
   }
 
   try {
@@ -20,32 +23,18 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
     );
 
-    const { data: existingUser } = await supabase
-      .from("users")
-      .select("*")
-      .eq("telegram_id", user.id)
-      .maybeSingle();
-
-    if (existingUser) {
-      await supabase
-        .from("users")
-        .update({
-          username: user.username ?? null,
-          first_name: user.first_name,
-          last_name: user.last_name ?? null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("telegram_id", user.id);
-    } else {
-      await supabase.from("users").insert({
-        id: user.id,
-        telegram_id: user.id,
-        username: user.username ?? null,
-        first_name: user.first_name,
-        last_name: user.last_name ?? null,
-        clicks: 0,
-      });
-    }
+    // Upsert atómico para evitar race conditions cuando el usuario abre la app desde múltiples dispositivos
+    await supabase.from("users").upsert({
+      id: user.id,
+      telegram_id: user.id,
+      username: user.username ?? null,
+      first_name: user.first_name,
+      last_name: user.last_name ?? null,
+      clicks: 0,
+    }, {
+      onConflict: "telegram_id",
+      ignoreDuplicates: false,
+    });
 
     return new Response(
       JSON.stringify({
@@ -59,14 +48,14 @@ serve(async (req) => {
       }),
       {
         status: 200,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        headers: { ...headers, "Content-Type": "application/json" },
       },
     );
   } catch (e) {
     const message = e instanceof Error ? e.message : "Error desconocido";
     return new Response(JSON.stringify({ error: message }), {
       status: 400,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      headers: { ...headers, "Content-Type": "application/json" },
     });
   }
 });
