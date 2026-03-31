@@ -161,15 +161,6 @@ main.active {
     }
 }
 
-.click-button:active {
-    animation: none;
-    transform: scale(0.92);
-    box-shadow: 
-        0 5px 20px var(--accent-glow),
-        0 0 0 4px rgba(108, 92, 231, 0.2),
-        inset 0 -2px 8px rgba(0, 0, 0, 0.3);
-}
-
 .click-button::before {
     content: '';
     position: absolute;
