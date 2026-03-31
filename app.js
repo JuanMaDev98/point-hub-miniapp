@@ -36,6 +36,7 @@ let flushInFlight = false;
  * Si el usuario cierra la app con clicks pendientes, se recuperan al volver.
  */
 const STORAGE_KEY = "pointhub_click_queue";
+const MILESTONE_KEY = "pointhub_last_milestone";
 
 /** Clicks confirmados por backend al momento de guardar en localStorage (referencia). */
 let savedServerClicks = 0;
@@ -51,6 +52,13 @@ function loadQueuedClicks() {
       if (parsed && typeof parsed.queued === "number" && parsed.queued > 0) {
         queuedClicks = parsed.queued;
         savedServerClicks = typeof parsed.serverClicks === "number" ? parsed.serverClicks : 0;
+      }
+    }
+    const milestoneStored = localStorage.getItem(MILESTONE_KEY);
+    if (milestoneStored) {
+      const parsed = JSON.parse(milestoneStored);
+      if (parsed && typeof parsed.milestone === "number") {
+        lastMilestone = parsed.milestone;
       }
     }
   } catch {
@@ -246,15 +254,17 @@ async function loadClicks() {
   try {
     loadQueuedClicks();
     await pullServerClickCount();
-    // Detectar si los clicks pendientes ya fueron contados por el servidor
-    // (puede pasar si la app se cerró mientras el flushPendingClicks del visibilitychange
-    // ya había enviado pero la respuesta no llegó a tiempo).
     if (queuedClicks > 0 && serverClicks >= savedServerClicks + queuedClicks) {
       queuedClicks = 0;
       clearQueuedClicks();
     }
     displayClickTotal();
-    // Si hay clicks pendientes al cargar, enviarlos inmediatamente
+    const total = serverClicks + queuedClicks + inFlightClicks;
+    for (const m of MILESTONES) {
+      if (total >= m) {
+        lastMilestone = m;
+      }
+    }
     if (queuedClicks > 0) {
       void flushPendingClicks();
     }
@@ -359,9 +369,11 @@ function updateClicks(e) {
   // Floating particle effect
   spawnClickParticle(e);
 
-  // Haptic feedback via Telegram WebApp
-  if (tg?.HapticFeedback) {
-    tg.HapticFeedback.impactOccurred("light");
+  // Haptic feedback via Telegram WebApp o fallback con navigator.vibrate
+  if (window.Telegram?.WebApp?.HapticFeedback) {
+    window.Telegram.WebApp.HapticFeedback.impactOccurred("light");
+  } else if (navigator.vibrate) {
+    navigator.vibrate(10);
   }
 
   // Check for milestone
@@ -374,6 +386,11 @@ function checkMilestone(total) {
   for (const m of MILESTONES) {
     if (total >= m && lastMilestone < m) {
       lastMilestone = m;
+      try {
+        localStorage.setItem(MILESTONE_KEY, JSON.stringify({ milestone: m }));
+      } catch {
+        /** ignorar */
+      }
       spawnConfetti();
       spawnMilestoneFlash();
       break;
