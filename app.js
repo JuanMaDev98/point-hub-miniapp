@@ -39,6 +39,12 @@ const STORAGE_KEY = "pointhub_click_queue";
 
 /** Clicks confirmados por backend al momento de guardar en localStorage (referencia). */
 let savedServerClicks = 0;
+/** Último milestone alcanzado para no repetir confetti. */
+let lastMilestone = 0;
+const MILESTONES = [100, 500, 1000, 5000, 10000, 50000, 100000];
+/** Último milestone alcanzado para no repetir confetti. */
+let lastMilestone = 0;
+const MILESTONES = [100, 500, 1000, 5000, 10000, 50000, 100000];
 
 function loadQueuedClicks() {
   try {
@@ -337,7 +343,7 @@ function clearPendingClicksOnClose() {
 }
 
 /** Handler del botón de click: suma instantánea + programa sync. */
-function updateClicks() {
+function updateClicks(e) {
   queuedClicks += 1;
   displayClickTotal();
   scheduleFlushClicks();
@@ -346,6 +352,146 @@ function updateClicks() {
   setTimeout(() => {
     clickBtn.style.transform = "scale(1)";
   }, 100);
+
+  // Bump animation on counter
+  clickCountEl.classList.add("bump");
+  setTimeout(() => {
+    clickCountEl.classList.remove("bump");
+  }, 150);
+
+  // Floating particle effect
+  spawnClickParticle(e);
+
+  // Haptic feedback via Telegram WebApp
+  if (tg?.HapticFeedback) {
+    tg.HapticFeedback.impactOccurred("light");
+  }
+
+  // Check for milestone
+  const total = serverClicks + queuedClicks + inFlightClicks;
+  checkMilestone(total);
+}
+
+/** Revisa si se alcanzó un nuevo milestone y lanza confetti. */
+function checkMilestone(total) {
+  for (const m of MILESTONES) {
+    if (total >= m && lastMilestone < m) {
+      lastMilestone = m;
+      spawnConfetti();
+      spawnMilestoneFlash();
+      break;
+    }
+  }
+}
+
+/** Lanza confetti por toda la pantalla. */
+function spawnConfetti() {
+  const container = document.createElement("div");
+  container.className = "confetti-container";
+
+  const colors = ["#6c5ce7", "#a29bfe", "#f9ca24", "#e17055", "#00cec9", "#fd79a8", "#55efc4"];
+
+  for (let i = 0; i < 50; i++) {
+    const confetti = document.createElement("div");
+    confetti.className = "confetti";
+    confetti.style.left = `${Math.random() * 100}%`;
+    confetti.style.top = `-${Math.random() * 20}%`;
+    confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+    confetti.style.animationDelay = `${Math.random() * 0.5}s`;
+    confetti.style.animationDuration = `${1.5 + Math.random() * 1.5}s`;
+    confetti.style.width = `${6 + Math.random() * 8}px`;
+    confetti.style.height = `${6 + Math.random() * 8}px`;
+    container.appendChild(confetti);
+  }
+
+  document.body.appendChild(container);
+  setTimeout(() => {
+    container.remove();
+  }, 3000);
+}
+
+/** Flash radial en pantalla para milestones. */
+function spawnMilestoneFlash() {
+  const flash = document.createElement("div");
+  flash.className = "milestone-flash";
+  document.body.appendChild(flash);
+  flash.addEventListener("animationend", () => {
+    flash.remove();
+  });
+}
+
+  // Check for milestone
+  const total = serverClicks + queuedClicks + inFlightClicks;
+  checkMilestone(total);
+}
+
+/** Revisa si se alcanzó un nuevo milestone y lanza confetti. */
+function checkMilestone(total) {
+  for (const m of MILESTONES) {
+    if (total >= m && lastMilestone < m) {
+      lastMilestone = m;
+      spawnConfetti();
+      spawnMilestoneFlash();
+      break;
+    }
+  }
+}
+
+/** Lanza confetti por toda la pantalla. */
+function spawnConfetti() {
+  const container = document.createElement("div");
+  container.className = "confetti-container";
+
+  const colors = ["#6c5ce7", "#a29bfe", "#f9ca24", "#e17055", "#00cec9", "#fd79a8", "#55efc4"];
+
+  for (let i = 0; i < 50; i++) {
+    const confetti = document.createElement("div");
+    confetti.className = "confetti";
+    confetti.style.left = `${Math.random() * 100}%`;
+    confetti.style.top = `-${Math.random() * 20}%`;
+    confetti.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+    confetti.style.animationDelay = `${Math.random() * 0.5}s`;
+    confetti.style.animationDuration = `${1.5 + Math.random() * 1.5}s`;
+    confetti.style.width = `${6 + Math.random() * 8}px`;
+    confetti.style.height = `${6 + Math.random() * 8}px`;
+    container.appendChild(confetti);
+  }
+
+  document.body.appendChild(container);
+  setTimeout(() => {
+    container.remove();
+  }, 3000);
+}
+
+/** Flash radial en pantalla para milestones. */
+function spawnMilestoneFlash() {
+  const flash = document.createElement("div");
+  flash.className = "milestone-flash";
+  document.body.appendChild(flash);
+  flash.addEventListener("animationend", () => {
+    flash.remove();
+  });
+}
+
+/** Crea una partícula flotante "+1" al hacer click. */
+function spawnClickParticle(e) {
+  const particle = document.createElement("div");
+  particle.className = "click-particle";
+  particle.textContent = "+1";
+
+  const rect = clickBtn.getBoundingClientRect();
+  const x = e?.clientX ?? rect.left + rect.width / 2;
+  const y = e?.clientY ?? rect.top + rect.height / 4;
+
+  const offsetX = (Math.random() - 0.5) * 40;
+
+  particle.style.left = `${x + offsetX}px`;
+  particle.style.top = `${y - 10}px`;
+
+  document.body.appendChild(particle);
+  particle.addEventListener("animationend", () => {
+    particle.remove();
+  });
 }
 
 // Al ocultar la app, intentamos enviar cola pendiente (best effort).
