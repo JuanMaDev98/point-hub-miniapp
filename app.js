@@ -54,6 +54,10 @@ function loadQueuedClicks() {
         savedServerClicks = typeof parsed.serverClicks === "number" ? parsed.serverClicks : 0;
       }
     }
+  } catch {
+    /** ignorar */
+  }
+  try {
     const milestoneStored = localStorage.getItem(MILESTONE_KEY);
     if (milestoneStored) {
       const parsed = JSON.parse(milestoneStored);
@@ -154,6 +158,19 @@ function escapeHtml(text) {
  */
 async function init() {
   loadingEl.classList.add("active");
+
+  // Limpieza defensiva de localStorage corrupto de versiones anteriores
+  try {
+    const oldStored = localStorage.getItem(STORAGE_KEY);
+    if (oldStored) {
+      const parsed = JSON.parse(oldStored);
+      if (!parsed || typeof parsed.queued !== "number" || parsed.queued < 0) {
+        localStorage.removeItem(STORAGE_KEY);
+      }
+    }
+  } catch {
+    localStorage.removeItem(STORAGE_KEY);
+  }
 
   try {
     const { SUPABASE_URL, SUPABASE_ANON_KEY } = await import("./config.js");
