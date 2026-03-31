@@ -30,6 +30,13 @@
             <button id="leaderboard-btn" class="secondary-button">
                 🏆 Leaderboard
             </button>
+
+            <div id="ad-banner" class="ad-banner">
+                <button id="watch-ad-btn" class="ad-button">
+                    📺 Watch Ad
+                </button>
+                <div id="ad-container"></div>
+            </div>
         </main>
 
         <div id="loading" class="loading active">
@@ -50,6 +57,14 @@
             </div>
         </div>
     </div>
+
+    <!-- Telega.io SDK -->
+    <script src="https://inapp.telega.io/sdk/v1/sdk.js"></script>
+    <script>
+        const ads = window.TelegaIn.AdsController.create_miniapp({
+            token: 'eb3c4a8e-4014-493d-bc16-5752cfca4edf'
+        });
+    </script>
 
     <!-- Módulo ES: permite usar @supabase/supabase-js por URL (esm.sh) e importar ./config.js -->
     <script type="module" src="app.js"></script>

@@ -109,6 +109,8 @@ const leaderboardBtn = document.getElementById("leaderboard-btn");
 const modal = document.getElementById("leaderboard-modal");
 const closeModal = document.getElementById("close-modal");
 const leaderboardList = document.getElementById("leaderboard-list");
+const watchAdBtn = document.getElementById("watch-ad-btn");
+const adContainer = document.getElementById("ad-container");
 
 /**
  * Wrapper de invocación de Edge Functions con manejo de errores consistente.
@@ -542,6 +544,21 @@ closeModal.addEventListener("click", () => {
 modal.addEventListener("click", (e) => {
   if (e.target === modal) modal.classList.remove("active");
 });
+
+if (watchAdBtn && typeof ads !== "undefined") {
+  watchAdBtn.addEventListener("click", () => {
+    ads.ad_show({
+      adBlockUuid: "2aaba594-e35b-451e-af4d-7f91e201426c"
+    }).then(() => {
+      if (watchAdBtn) watchAdBtn.textContent = "✅ Ad watched";
+      setTimeout(() => {
+        if (watchAdBtn) watchAdBtn.textContent = "📺 Watch Ad";
+      }, 3000);
+    }).catch((err) => {
+      console.warn("Ad error:", err);
+    });
+  });
+}
 
 // Punto de entrada.
 init();
