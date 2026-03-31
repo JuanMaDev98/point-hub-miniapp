@@ -37,6 +37,9 @@ let flushInFlight = false;
  */
 const STORAGE_KEY = "pointhub_click_queue";
 
+/** Clicks confirmados por backend al momento de guardar en localStorage (referencia). */
+let savedServerClicks = 0;
+
 function loadQueuedClicks() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
@@ -44,6 +47,7 @@ function loadQueuedClicks() {
       const parsed = JSON.parse(stored);
       if (parsed && typeof parsed.queued === "number" && parsed.queued > 0) {
         queuedClicks = parsed.queued;
+        savedServerClicks = typeof parsed.serverClicks === "number" ? parsed.serverClicks : 0;
       }
     }
   } catch {
@@ -54,7 +58,7 @@ function loadQueuedClicks() {
 function saveQueuedClicks() {
   try {
     if (queuedClicks > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ queued: queuedClicks }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ queued: queuedClicks, serverClicks: serverClicks }));
     } else {
       localStorage.removeItem(STORAGE_KEY);
     }
@@ -239,6 +243,13 @@ async function loadClicks() {
   try {
     loadQueuedClicks();
     await pullServerClickCount();
+    // Detectar si los clicks pendientes ya fueron contados por el servidor
+    // (puede pasar si la app se cerró mientras el flushPendingClicks del visibilitychange
+    // ya había enviado pero la respuesta no llegó a tiempo).
+    if (queuedClicks > 0 && serverClicks >= savedServerClicks + queuedClicks) {
+      queuedClicks = 0;
+      clearQueuedClicks();
+    }
     displayClickTotal();
     // Si hay clicks pendientes al cargar, enviarlos inmediatamente
     if (queuedClicks > 0) {
@@ -311,6 +322,20 @@ async function flushPendingClicks() {
   }
 }
 
+/**
+ * Limpia la cola de clicks pendientes al cerrar la app.
+ * Se llama cuando la visibilidad cambia a "hidden" para evitar duplicados
+ * si el flushPendingClicks ya fue enviado pero la respuesta no llegó.
+ */
+function clearPendingClicksOnClose() {
+  if (queuedClicks > 0 || inFlightClicks > 0) {
+    // No borramos la cola de localStorage aquí porque el flushPendingClicks
+    // del visibilitychange ya se encargó de enviarla. Solo aseguramos que
+    // si la app se vuelve a abrir, no se duplique nada.
+    saveQueuedClicks();
+  }
+}
+
 /** Handler del botón de click: suma instantánea + programa sync. */
 function updateClicks() {
   queuedClicks += 1;
@@ -325,8 +350,11 @@ function updateClicks() {
 
 // Al ocultar la app, intentamos enviar cola pendiente (best effort).
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "hidden" && queuedClicks > 0) {
-    void flushPendingClicks();
+  if (document.visibilityState === "hidden") {
+    if (queuedClicks > 0) {
+      void flushPendingClicks();
+    }
+    clearPendingClicksOnClose();
   }
 });
 
